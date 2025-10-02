@@ -1,0 +1,23 @@
+[package]
+name = "arbitration_dao"
+version = "0.1.0"
+authors = ["GLIN Team"]
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+ink = { workspace = true }
+scale = { workspace = true }
+scale-info = { workspace = true }
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "ink/std",
+    "scale/std",
+    "scale-info/std",
+]
+ink-as-dependency = []

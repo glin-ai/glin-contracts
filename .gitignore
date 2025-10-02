@@ -1,0 +1,46 @@
+# Rust/Cargo
+/target
+**/target
+**/*.rs.bk
+Cargo.lock
+
+# ink! artifacts
+**/*.contract
+**/*.wasm
+**/*.json
+!Cargo.toml
+!**/Cargo.toml
+
+# Deployment files
+deployment-manifest.json
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+/target/ink
+/target/release
+/target/debug
+
+# Test artifacts
+*.profraw
+*.profdata
