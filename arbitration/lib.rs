@@ -21,7 +21,7 @@ mod arbitration_dao {
 
     /// Dispute status
     #[derive(Debug, PartialEq, Eq, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub enum DisputeStatus {
         Open,
         Voting,
@@ -32,7 +32,7 @@ mod arbitration_dao {
 
     /// Vote choice
     #[derive(Debug, PartialEq, Eq, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub enum VoteChoice {
         InFavorOfClaimant,
         InFavorOfDefendant,
@@ -40,7 +40,7 @@ mod arbitration_dao {
 
     /// Dispute information
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub struct Dispute {
         pub dispute_id: u128,
         pub claimant: AccountId,
@@ -58,7 +58,7 @@ mod arbitration_dao {
 
     /// Arbitrator information
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub struct Arbitrator {
         pub account: AccountId,
         pub stake: Balance,
@@ -213,7 +213,9 @@ mod arbitration_dao {
             let mut arbitrator = self.arbitrators.get(caller)
                 .ok_or(Error::NotRegisteredArbitrator)?;
 
-            arbitrator.stake += additional_stake;
+            arbitrator.stake = arbitrator.stake
+                .checked_add(additional_stake)
+                .expect("Arbitrator stake overflow");
             self.arbitrators.insert(caller, &arbitrator);
 
             Ok(())
@@ -229,10 +231,14 @@ mod arbitration_dao {
         ) -> Result<u128> {
             let caller = self.env().caller();
             let dispute_id = self.next_dispute_id;
-            self.next_dispute_id += 1;
+            self.next_dispute_id = self.next_dispute_id
+                .checked_add(1)
+                .expect("Dispute ID overflow");
 
             let now = self.env().block_timestamp();
-            let voting_ends_at = now + self.voting_period;
+            let voting_ends_at = now
+                .checked_add(self.voting_period)
+                .expect("Voting period overflow");
 
             let dispute = Dispute {
                 dispute_id,
@@ -317,16 +323,26 @@ mod arbitration_dao {
             self.votes.insert((dispute_id, caller), &choice);
             self.vote_weights.insert((dispute_id, caller), &vote_weight);
 
-            // Update vote counts
+            // Update vote counts with checked arithmetic
             match choice {
-                VoteChoice::InFavorOfClaimant => dispute.votes_for_claimant += vote_weight,
-                VoteChoice::InFavorOfDefendant => dispute.votes_for_defendant += vote_weight,
+                VoteChoice::InFavorOfClaimant => {
+                    dispute.votes_for_claimant = dispute.votes_for_claimant
+                        .checked_add(vote_weight)
+                        .expect("Votes for claimant overflow");
+                },
+                VoteChoice::InFavorOfDefendant => {
+                    dispute.votes_for_defendant = dispute.votes_for_defendant
+                        .checked_add(vote_weight)
+                        .expect("Votes for defendant overflow");
+                },
             }
 
             self.disputes.insert(dispute_id, &dispute);
 
             // Update arbitrator stats
-            arbitrator.disputes_participated += 1;
+            arbitrator.disputes_participated = arbitrator.disputes_participated
+                .checked_add(1)
+                .expect("Disputes participated overflow");
             self.arbitrators.insert(caller, &arbitrator);
 
             self.env().emit_event(VoteCast {
@@ -354,8 +370,10 @@ mod arbitration_dao {
                 return Err(Error::VotingPeriodNotEnded);
             }
 
-            // Calculate total votes
-            let total_votes = dispute.votes_for_claimant + dispute.votes_for_defendant;
+            // Calculate total votes with checked arithmetic
+            let total_votes = dispute.votes_for_claimant
+                .checked_add(dispute.votes_for_defendant)
+                .expect("Total votes overflow");
 
             // Check quorum (simplified: at least one vote)
             if total_votes == 0 {
@@ -403,7 +421,9 @@ mod arbitration_dao {
 
             // Reset for new voting round
             dispute.status = DisputeStatus::Appealed;
-            dispute.voting_ends_at = self.env().block_timestamp() + self.voting_period;
+            dispute.voting_ends_at = self.env().block_timestamp()
+                .checked_add(self.voting_period)
+                .expect("Voting period overflow");
             dispute.votes_for_claimant = 0;
             dispute.votes_for_defendant = 0;
             dispute.can_appeal = false; // Only one appeal allowed

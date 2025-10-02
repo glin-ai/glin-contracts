@@ -17,7 +17,52 @@ fi
 
 # Configuration
 TESTNET_URL="${TESTNET_URL:-ws://localhost:9944}"
-SURI="${SURI:-//Alice}"  # Default to Alice for local testing
+
+# Path to validator keys (gitignored directory with secrets)
+VALIDATOR_KEYS_DIR="${VALIDATOR_KEYS_DIR:-../../glin-chain/validator-keys}"
+FAUCET_KEY_FILE="$VALIDATOR_KEYS_DIR/faucet_account.json"
+
+# For local --dev mode (Alice has balance in dev mode)
+ALICE_SURI="//Alice"
+ALICE_ACCOUNT="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+
+# Load faucet account from JSON file (never hardcode seeds!)
+load_faucet_account() {
+    if [[ ! -f "$FAUCET_KEY_FILE" ]]; then
+        echo "❌ Faucet key file not found: $FAUCET_KEY_FILE"
+        echo "This file should be in the gitignored validator-keys directory."
+        exit 1
+    fi
+
+    # Extract secretPhrase and ss58Address from JSON
+    FAUCET_SURI=$(grep -oP '"secretPhrase":\s*"\K[^"]+' "$FAUCET_KEY_FILE")
+    FAUCET_ACCOUNT=$(grep -oP '"ss58Address":\s*"\K[^"]+' "$FAUCET_KEY_FILE")
+
+    if [[ -z "$FAUCET_SURI" ]] || [[ -z "$FAUCET_ACCOUNT" ]]; then
+        echo "❌ Failed to parse faucet account from $FAUCET_KEY_FILE"
+        exit 1
+    fi
+}
+
+# Determine which account to use
+if [[ "$TESTNET_URL" == *"localhost"* ]] || [[ "$TESTNET_URL" == *"127.0.0.1"* ]]; then
+    # Check if user wants to use testnet chain spec on localhost
+    if [[ -z "$USE_FAUCET" ]]; then
+        echo "Local node detected. Using Alice for dev mode."
+        echo "If running testnet chain spec locally, set USE_FAUCET=1"
+        SURI="$ALICE_SURI"
+        DEPLOY_ACCOUNT="$ALICE_ACCOUNT"
+    else
+        load_faucet_account
+        SURI="$FAUCET_SURI"
+        DEPLOY_ACCOUNT="$FAUCET_ACCOUNT"
+    fi
+else
+    # Remote testnet - use faucet account
+    load_faucet_account
+    SURI="${SURI:-$FAUCET_SURI}"
+    DEPLOY_ACCOUNT="$FAUCET_ACCOUNT"
+fi
 
 # Colors
 GREEN='\033[0;32m'
@@ -28,7 +73,8 @@ NC='\033[0m'
 echo ""
 echo -e "${YELLOW}⚠️  Configuration:${NC}"
 echo "  • Network: $TESTNET_URL"
-echo "  • Deployer: Using provided seed/key"
+echo "  • Deployer: $DEPLOY_ACCOUNT"
+echo "  • Using SURI: ${SURI:0:20}..." # Show first 20 chars only
 echo ""
 echo -e "${YELLOW}📝 Note: Make sure contracts are built first (run build-all.sh)${NC}"
 echo ""
@@ -41,7 +87,9 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
-BUILD_DIR="../target/ink"
+# Get absolute path to build directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/target/ink"
 
 # Deploy function
 deploy_contract() {
@@ -80,9 +128,9 @@ echo "========================"
 echo ""
 echo -e "${BLUE}1️⃣  ProfessionalRegistry${NC}"
 deploy_contract \
-    "$BUILD_DIR/registry.contract" \
+    "$BUILD_DIR/professional_registry.contract" \
     "ProfessionalRegistry" \
-    "--args $SURI $SURI 1000"  # owner, treasury, slash_bps
+    "--args $DEPLOY_ACCOUNT $DEPLOY_ACCOUNT 1000"  # owner, treasury, slash_bps
 
 # Save deployed address (user needs to input)
 read -p "Enter ProfessionalRegistry contract address: " REGISTRY_ADDRESS
@@ -92,9 +140,9 @@ echo "Saved: $REGISTRY_ADDRESS"
 echo ""
 echo -e "${BLUE}2️⃣  ArbitrationDAO${NC}"
 deploy_contract \
-    "$BUILD_DIR/arbitration.contract" \
+    "$BUILD_DIR/arbitration_dao.contract" \
     "ArbitrationDAO" \
-    "--args $SURI 100000000000000000000 604800000 5000"  # owner, min_stake (100 GLIN), voting_period (7 days), quorum 50%
+    "--args $DEPLOY_ACCOUNT 100000000000000000000 604800000 5000"  # owner, min_stake (100 GLIN), voting_period (7 days), quorum 50%
 
 # Save deployed address
 read -p "Enter ArbitrationDAO contract address: " ARBITRATION_ADDRESS
@@ -104,9 +152,9 @@ echo "Saved: $ARBITRATION_ADDRESS"
 echo ""
 echo -e "${BLUE}3️⃣  GenericEscrow${NC}"
 deploy_contract \
-    "$BUILD_DIR/escrow.contract" \
+    "$BUILD_DIR/generic_escrow.contract" \
     "GenericEscrow" \
-    "--args $SURI 200"  # platform_account, platform_fee_bps (2%)
+    "--args $DEPLOY_ACCOUNT 200"  # platform_account, platform_fee_bps (2%)
 
 # Save deployed address
 read -p "Enter GenericEscrow contract address: " ESCROW_ADDRESS

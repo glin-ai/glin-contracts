@@ -21,7 +21,7 @@ mod generic_escrow {
 
     /// Milestone status
     #[derive(Debug, PartialEq, Eq, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub enum MilestoneStatus {
         Pending,
         Completed,
@@ -32,7 +32,7 @@ mod generic_escrow {
 
     /// Milestone definition
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub struct Milestone {
         pub description: ink::prelude::string::String,
         pub amount: Balance,
@@ -43,7 +43,7 @@ mod generic_escrow {
 
     /// Escrow agreement
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub struct Agreement {
         pub client: AccountId,
         pub provider: AccountId,
@@ -168,7 +168,9 @@ mod generic_escrow {
             }
 
             let agreement_id = self.next_agreement_id;
-            self.next_agreement_id += 1;
+            self.next_agreement_id = self.next_agreement_id
+                .checked_add(1)
+                .expect("Agreement ID overflow");
 
             // Create agreement
             let agreement = Agreement {
@@ -200,10 +202,12 @@ mod generic_escrow {
                     oracle_verification: oracle.is_some(),
                 };
 
-                self.milestones.insert((agreement_id, i as u32), &milestone);
+                let milestone_index = u32::try_from(i).expect("Too many milestones");
+                self.milestones.insert((agreement_id, milestone_index), &milestone);
             }
 
-            self.milestone_counts.insert(agreement_id, &(milestone_count as u32));
+            let milestone_count_u32 = u32::try_from(milestone_count).expect("Milestone count overflow");
+            self.milestone_counts.insert(agreement_id, &milestone_count_u32);
 
             self.env().emit_event(AgreementCreated {
                 agreement_id,
@@ -280,9 +284,15 @@ mod generic_escrow {
             milestone.status = MilestoneStatus::Resolved;
             self.milestones.insert((agreement_id, milestone_index), &milestone);
 
-            // Calculate platform fee
-            let platform_fee = (milestone.amount * self.platform_fee_bps as u128) / 10000;
-            let provider_amount = milestone.amount - platform_fee;
+            // Calculate platform fee (checked arithmetic)
+            let fee_bps = u128::from(self.platform_fee_bps);
+            let platform_fee = milestone.amount
+                .checked_mul(fee_bps)
+                .and_then(|v| v.checked_div(10000))
+                .expect("Platform fee calculation overflow");
+            let provider_amount = milestone.amount
+                .checked_sub(platform_fee)
+                .expect("Platform fee exceeds milestone amount");
 
             // Transfer funds
             if platform_fee > 0 {
@@ -369,14 +379,20 @@ mod generic_escrow {
                 agreement.client
             };
 
-            // Calculate fees
+            // Calculate fees (checked arithmetic)
             let platform_fee = if release_to_provider {
-                (milestone.amount * self.platform_fee_bps as u128) / 10000
+                let fee_bps = u128::from(self.platform_fee_bps);
+                milestone.amount
+                    .checked_mul(fee_bps)
+                    .and_then(|v| v.checked_div(10000))
+                    .expect("Platform fee calculation overflow")
             } else {
                 0 // No fee if refunding to client
             };
 
-            let final_amount = milestone.amount - platform_fee;
+            let final_amount = milestone.amount
+                .checked_sub(platform_fee)
+                .expect("Platform fee exceeds milestone amount");
 
             if platform_fee > 0 {
                 self.env().transfer(self.platform_account, platform_fee)

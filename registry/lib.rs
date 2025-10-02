@@ -21,7 +21,7 @@ mod professional_registry {
 
     /// Professional role types
     #[derive(Debug, PartialEq, Eq, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub enum ProfessionalRole {
         Lawyer,
         Doctor,
@@ -33,7 +33,7 @@ mod professional_registry {
 
     /// Professional profile
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub struct ProfessionalProfile {
         pub account: AccountId,
         pub role: ProfessionalRole,
@@ -48,7 +48,7 @@ mod professional_registry {
 
     /// Review/Rating
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub struct Review {
         pub reviewer: AccountId,
         pub rating: u8, // 1-5
@@ -213,7 +213,9 @@ mod professional_registry {
 
             let mut profile = self.professionals.get(caller).ok_or(Error::NotRegistered)?;
 
-            profile.stake_amount += additional_stake;
+            profile.stake_amount = profile.stake_amount
+                .checked_add(additional_stake)
+                .expect("Stake amount overflow");
             self.professionals.insert(caller, &profile);
 
             self.env().emit_event(StakeIncreased {
@@ -235,7 +237,7 @@ mod professional_registry {
             let caller = self.env().caller();
 
             // Validate rating
-            if rating < 1 || rating > 5 {
+            if !(1..=5).contains(&rating) {
                 return Err(Error::InvalidRating);
             }
 
@@ -255,18 +257,41 @@ mod professional_registry {
             };
 
             self.reviews.insert((professional, review_index), &review);
-            self.review_counts.insert(professional, &(review_index + 1));
+            let next_review_index = review_index
+                .checked_add(1)
+                .expect("Review index overflow");
+            self.review_counts.insert(professional, &next_review_index);
 
-            // Update reputation score (simple weighted average)
-            let new_reputation = ((profile.reputation_score as u32 * profile.total_jobs as u32)
-                + (rating as u32 * 20))
-                / (profile.total_jobs as u32 + 1);
+            // Update reputation score (simple weighted average) with checked arithmetic
+            let current_score_u32 = profile.reputation_score;
+            let rating_u32 = u32::from(rating);
+            let total_jobs_u32 = profile.total_jobs;
+
+            let weighted_current = current_score_u32
+                .checked_mul(total_jobs_u32)
+                .expect("Reputation calculation overflow");
+            let weighted_new = rating_u32
+                .checked_mul(20)
+                .expect("Rating multiplication overflow");
+            let numerator = weighted_current
+                .checked_add(weighted_new)
+                .expect("Reputation sum overflow");
+            let denominator = total_jobs_u32
+                .checked_add(1)
+                .expect("Total jobs overflow");
+            let new_reputation = numerator
+                .checked_div(denominator)
+                .expect("Reputation division error");
 
             profile.reputation_score = new_reputation;
-            profile.total_jobs += 1;
+            profile.total_jobs = profile.total_jobs
+                .checked_add(1)
+                .expect("Total jobs increment overflow");
 
             if rating >= 4 {
-                profile.successful_jobs += 1;
+                profile.successful_jobs = profile.successful_jobs
+                    .checked_add(1)
+                    .expect("Successful jobs increment overflow");
             }
 
             self.professionals.insert(professional, &profile);
@@ -295,11 +320,17 @@ mod professional_registry {
 
             let mut profile = self.professionals.get(professional).ok_or(Error::NotRegistered)?;
 
-            // Calculate slash amount
-            let slash_amount = (profile.stake_amount * self.slash_percentage_bps as u128) / 10000;
+            // Calculate slash amount with checked arithmetic
+            let slash_bps = u128::from(self.slash_percentage_bps);
+            let slash_amount = profile.stake_amount
+                .checked_mul(slash_bps)
+                .and_then(|v| v.checked_div(10000))
+                .expect("Slash calculation overflow");
 
             if slash_amount > 0 {
-                profile.stake_amount -= slash_amount;
+                profile.stake_amount = profile.stake_amount
+                    .checked_sub(slash_amount)
+                    .expect("Slash amount exceeds stake");
 
                 // Transfer slashed amount to treasury
                 self.env()

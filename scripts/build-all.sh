@@ -27,11 +27,13 @@ mkdir -p "$BUILD_DIR"
 # Contracts to build
 contracts=("escrow" "registry" "arbitration")
 contract_names=("GenericEscrow" "ProfessionalRegistry" "ArbitrationDAO")
+artifact_names=("generic_escrow" "professional_registry" "arbitration_dao")
 
 # Build each contract
 for i in "${!contracts[@]}"; do
     contract="${contracts[$i]}"
     name="${contract_names[$i]}"
+    artifact="${artifact_names[$i]}"
 
     echo ""
     echo -e "${BLUE}📋 Building $name...${NC}"
@@ -43,12 +45,12 @@ for i in "${!contracts[@]}"; do
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ $name built successfully${NC}"
 
-        # Copy artifacts to build directory
-        cp "target/ink/${contract}.contract" "$BUILD_DIR/${contract}.contract"
-        cp "target/ink/${contract}.wasm" "$BUILD_DIR/${contract}.wasm"
+        # Copy artifacts to build directory (paths relative to contract dir)
+        cp "../target/ink/${artifact}/${artifact}.contract" "$BUILD_DIR/${artifact}.contract"
+        cp "../target/ink/${artifact}/${artifact}.wasm" "$BUILD_DIR/${artifact}.wasm"
 
         # Display file info
-        echo "📦 Contract size: $(du -h target/ink/${contract}.wasm | cut -f1)"
+        echo "📦 Contract size: $(du -h ../target/ink/${artifact}/${artifact}.wasm | cut -f1)"
     else
         echo "❌ Failed to build $name"
         exit 1
@@ -64,9 +66,9 @@ echo ""
 echo "📂 Artifacts location: $BUILD_DIR"
 echo ""
 echo "Built contracts:"
-for contract in "${contracts[@]}"; do
-    echo "  • ${contract}.contract"
-    echo "  • ${contract}.wasm"
+for artifact in "${artifact_names[@]}"; do
+    echo "  • ${artifact}.contract"
+    echo "  • ${artifact}.wasm"
 done
 echo ""
 echo "🚀 Ready for deployment!"
